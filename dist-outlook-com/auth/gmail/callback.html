@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Connecting to Candle</title>
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <style>
+      body { font-family: "Segoe UI", system-ui, sans-serif; margin: 2rem; color: #222; }
+    </style>
+  </head>
+  <body>
+    <p id="status">Finishing the connection...</p>
+    <script>
+      // Provider OAuth (Clio, Gmail) redirects back to this page. The task pane
+      // opened the flow as an Office dialog and is waiting on
+      // DialogMessageReceived, so hand it the full callback URL and let it pull
+      // the authorization code out.
+      //
+      // This page must live on the add-in's own origin: Office only delivers
+      // messageParent to the parent runtime's domain, and the parent here is the
+      // task pane on candle-ai.github.io.
+      function show(text) {
+        document.getElementById('status').textContent = text;
+      }
+
+      function deliver() {
+        try {
+          Office.context.ui.messageParent(window.location.href);
+          show('You can close this window.');
+        } catch (err) {
+          show('Could not return to Candle. Close this window and try connecting again.');
+        }
+      }
+
+      if (typeof Office !== 'undefined' && Office.onReady) {
+        Office.onReady(deliver);
+      } else {
+        show('Could not return to Candle. Close this window and try connecting again.');
+      }
+    </script>
+  </body>
+</html>
