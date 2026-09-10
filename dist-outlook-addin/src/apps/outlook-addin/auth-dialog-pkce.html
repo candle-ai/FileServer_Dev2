@@ -217,10 +217,9 @@
       return new URLSearchParams(search).get('mode') === 'handoff';
     }
 
-    function getHandoffAuthorizeUrl(search) {
-      var params = new URLSearchParams(search);
-      if (params.get('mode') !== 'handoff') return null;
-      var raw = params.get('authorize');
+    // The single origin rule both modes are held to. Everything this page is
+    // willing to navigate to passes through here first.
+    function trustedCognitoUrl(raw) {
       if (!raw) return null;
       var url;
       try {
@@ -236,6 +235,60 @@
       }
       if (url.protocol !== 'https:' || url.origin !== expectedOrigin) return null;
       return url.toString();
+    }
+
+    function getHandoffAuthorizeUrl(search) {
+      var params = new URLSearchParams(search);
+      if (params.get('mode') !== 'handoff') return null;
+      return trustedCognitoUrl(params.get('authorize'));
+    }
+
+    // ---- Sign-out ---------------------------------------------------------
+    // Signing out of Candle also ends the Cognito session, which only Cognito
+    // can do and only through a top-level navigation (/logout is served with
+    // X-Frame-Options: DENY). So the same window trick as sign-in: the taskpane
+    // opens this page with the /logout URL, the page sends the window there,
+    // and Cognito returns it here with ?signout=true once the cookie is gone.
+    // That marker is the app client's registered sign-out URL, so it is the one
+    // place Cognito is allowed to come back to.
+    function getSignOutUrl(search) {
+      var params = new URLSearchParams(search);
+      if (params.get('mode') !== 'signout') return null;
+      return trustedCognitoUrl(params.get('logout'));
+    }
+
+    function isSignOutLanding(search) {
+      var params = new URLSearchParams(search);
+      return params.get('mode') !== 'signout' && params.get('signout') === 'true';
+    }
+
+    // Returns true when this page is on either leg of the sign-out trip, so the
+    // caller knows neither sign-in flow applies.
+    function startSignOutIfRequested() {
+      if (isSignOutLanding(window.location.search)) {
+        // Back from Cognito: the session is gone. On the web this window was
+        // opened with window.open and lost its Office handle at Cognito's COOP
+        // header, so closing itself is the only way it closes; on the desktop
+        // hosts the taskpane is listening and closes it.
+        console.log('Sign-out complete');
+        showSignedOut();
+        sendMessage({ type: 'SIGN_OUT_COMPLETE' });
+        setTimeout(function () { window.close(); }, 600);
+        return true;
+      }
+
+      if (new URLSearchParams(window.location.search).get('mode') !== 'signout') return false;
+
+      var logoutUrl = getSignOutUrl(window.location.search);
+      if (!logoutUrl) {
+        console.error('Sign-out mode with a missing or untrusted logout URL');
+        showError('This sign-out link is not valid. You can close this window; Candle has signed you out on this device.');
+        return true;
+      }
+      console.log('Sign-out mode: sending the window to Cognito...');
+      showLoading();
+      redirectToSignIn(logoutUrl);
+      return true;
     }
 
     // The one seam through which this page navigates, so tests can observe it.
@@ -265,11 +318,19 @@
     // Display environment info
     document.getElementById('env-info').textContent = `Environment: ${CONFIG.environment}`;
 
-    // Outlook on the web: leave for Cognito immediately. Everything below this
-    // point is the desktop in-dialog flow.
-    var IN_HANDOFF_MODE = startHandoffIfRequested();
+    // Sign-out owns the window outright when it is asked for; sign-in cannot
+    // also be in progress. Outlook on the web then leaves for Cognito
+    // immediately, and everything below this point is the desktop in-dialog
+    // sign-in flow.
+    var IN_SIGN_OUT_MODE = startSignOutIfRequested();
+    var IN_HANDOFF_MODE = !IN_SIGN_OUT_MODE && startHandoffIfRequested();
 
     async function startAuth() {
+      if (IN_SIGN_OUT_MODE) {
+        // Try Again after a refused sign-out URL re-runs the sign-out check.
+        startSignOutIfRequested();
+        return;
+      }
       if (IN_HANDOFF_MODE) {
         // Try Again after a refused URL simply re-runs the handoff check.
         startHandoffIfRequested();
@@ -492,10 +553,20 @@
       document.getElementById('error-message').textContent = message;
     }
 
+    // The trip back from Cognito, for the moment before the window closes.
+    function showSignedOut() {
+      document.getElementById('sign-in').style.display = 'none';
+      document.getElementById('error').style.display = 'none';
+      document.getElementById('loading').style.display = 'block';
+      document.querySelector('#loading p').textContent = "You're signed out. This window will close by itself.";
+      document.querySelector('.auth-container h2').textContent = 'Signed out of Candle';
+      document.querySelector('.auth-container > p').textContent = '';
+    }
+
     // Initialize when Office is ready
     Office.onReady(() => {
       console.log(`Office ready in auth dialog (${CONFIG.environment} environment)`);
-      if (IN_HANDOFF_MODE) return;
+      if (IN_HANDOFF_MODE || IN_SIGN_OUT_MODE) return;
 
       // Check if this is a callback
       const urlParams = new URLSearchParams(window.location.search);
@@ -506,6 +577,7 @@
 
     // Fallback initialization if Office.js doesn't load
     setTimeout(() => {
+      if (IN_SIGN_OUT_MODE) return;
       if (typeof Office === 'undefined' || !Office.context) {
         console.log('Office.js not available, using fallback initialization');
         const urlParams = new URLSearchParams(window.location.search);
