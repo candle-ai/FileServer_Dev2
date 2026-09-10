@@ -286,7 +286,10 @@
         return true;
       }
       console.log('Sign-out mode: sending the window to Cognito...');
-      showLoading();
+      // This page's static heading reads "Sign in to Candle". Signing out borrows
+      // the page, so the heading has to be rewritten before the browser paints,
+      // or a sign-out flashes the word "Sign in" and reads as a glitch.
+      showSigningOut();
       redirectToSignIn(logoutUrl);
       return true;
     }
@@ -359,7 +362,11 @@
           `redirect_uri=${encodeURIComponent(CONFIG.REDIRECT_URI)}&` +
           `code_challenge=${codeChallenge}&` +
           `code_challenge_method=S256&` +
-          `state=${state}`;
+          `state=${state}&` +
+          // Keep in step with SIGN_IN_PROMPT in outlookAuthUtils.ts: login makes
+          // Cognito ignore its session cookie, select_account is forwarded so the
+          // IdP offers an account chooser rather than reusing its own session.
+          `prompt=login+select_account`;
 
         console.log('Auth URL:', authUrl);
         console.log('Redirect URI:', CONFIG.REDIRECT_URI);
@@ -553,14 +560,28 @@
       document.getElementById('error-message').textContent = message;
     }
 
+    // Both sign-out legs rewrite the page's static "Sign in to Candle" heading.
+    // Without this a sign-out shows the word "Sign in" for as long as the trip
+    // to Cognito takes, and the window then vanishing reads as a failure.
+    function setSignOutChrome(heading, detail) {
+      var h = document.querySelector('.auth-container h2');
+      var p = document.querySelector('.auth-container > p');
+      var l = document.querySelector('#loading p');
+      if (h) h.textContent = heading;
+      if (p) p.textContent = '';
+      if (l) l.textContent = detail;
+    }
+
+    // The outbound leg: on its way to Cognito to end the session.
+    function showSigningOut() {
+      setSignOutChrome('Signing out of Candle', 'Signing you out...');
+      showLoading();
+    }
+
     // The trip back from Cognito, for the moment before the window closes.
     function showSignedOut() {
-      document.getElementById('sign-in').style.display = 'none';
-      document.getElementById('error').style.display = 'none';
-      document.getElementById('loading').style.display = 'block';
-      document.querySelector('#loading p').textContent = "You're signed out. This window will close by itself.";
-      document.querySelector('.auth-container h2').textContent = 'Signed out of Candle';
-      document.querySelector('.auth-container > p').textContent = '';
+      setSignOutChrome('Signed out of Candle', "You're signed out. This window will close by itself.");
+      showLoading();
     }
 
     // Initialize when Office is ready
