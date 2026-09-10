@@ -273,7 +273,18 @@
         console.log('Sign-out complete');
         showSignedOut();
         sendMessage({ type: 'SIGN_OUT_COMPLETE' });
-        setTimeout(function () { window.close(); }, 600);
+        setTimeout(function () {
+          try { window.close(); } catch (e) { /* refused below */ }
+          // If close() worked, this page is gone and the timer never fires.
+          // If it was refused — a COM sign-out reaches this page through the
+          // system browser, so the tab was opened by the shell rather than by
+          // script and close() is ignored — correct the message instead of
+          // leaving a tab insisting it is about to disappear.
+          setTimeout(function () {
+            console.log('This window could not close itself; telling the user to close it');
+            showSignedOutStayOpen();
+          }, 400);
+        }, 600);
         return true;
       }
 
@@ -581,6 +592,18 @@
     // The trip back from Cognito, for the moment before the window closes.
     function showSignedOut() {
       setSignOutChrome('Signed out of Candle', "You're signed out. This window will close by itself.");
+      showLoading();
+    }
+
+    // Same leg, once we know the window is staying.
+    //
+    // window.close() only works on a window script opened. The COM host reaches
+    // this page through the system browser (Process.Start), so the tab was
+    // opened by the shell, every browser ignores close() on it, and the promise
+    // above never comes true. That tab is the only thing a COM sign-out puts on
+    // screen, so it should not end on a sentence that turns out to be false.
+    function showSignedOutStayOpen() {
+      setSignOutChrome('Signed out of Candle', "You're signed out of Candle. You can close this tab.");
       showLoading();
     }
 
